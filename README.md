@@ -119,14 +119,4 @@ global-superstore-kpi-sql/
 │   └── task_3_time_kpis.sql
 │   └── task_4_product_category_kpis.sql
 └── src/
-    └── README.md
-
-
----
-
-
-
-
-
-
-
+    └── download_and_convert_kagglehub.ipynb
