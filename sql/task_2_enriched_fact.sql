@@ -1,0 +1,90 @@
+* ============================================================
+   TASK 2 — Returns + People + Enriched fact table + KPIs
+   Assumptions (SQLiteOnline CSV import):
+     Returns(C1,C2,C3) = (Returned, Order ID, Region)
+     People(C1,C2)     = (Person, Region)
+   Inputs:
+     - fct_orders (from Task 1)
+     - Returns, People (uploaded CSV tables)
+   Outputs:
+     - stg_returns, dim_people, fct_orders_enriched
+     - KPIs: Return rate, Net revenue, Manager performance
+   ============================================================ */
+
+-- 0) Drop old tables (safe rerun)
+DROP TABLE IF EXISTS stg_returns;
+DROP TABLE IF EXISTS dim_people;
+DROP TABLE IF EXISTS fct_orders_enriched;
+
+-- 1) Stage RETURNS (C1=Returned, C2=Order ID, C3=Region)
+CREATE TABLE stg_returns AS
+SELECT
+  C2 AS order_id,
+  C1 AS returned_raw,
+  C3 AS region_raw,
+  CASE WHEN C1 = 'Yes' THEN 1 ELSE 0 END AS is_returned
+FROM Returns;
+
+-- Remove header row if it exists
+DELETE FROM stg_returns
+WHERE order_id IN ('Order ID', 'order_id', 'OrderID');
+
+-- 2) Stage PEOPLE (C1=Person, C2=Region)
+CREATE TABLE dim_people AS
+SELECT
+  C1 AS person,
+  C2 AS region
+FROM People;
+
+-- Remove header row if it exists
+DELETE FROM dim_people
+WHERE person IN ('Person', 'person');
+
+-- 3) Build ENRICHED FACT table
+CREATE TABLE fct_orders_enriched AS
+SELECT
+  o.*,
+  COALESCE(r.is_returned, 0) AS is_returned,
+  p.person AS region_manager,
+
+  -- Net metrics (simple assumption: returned orders contribute 0 net)
+  CASE WHEN COALESCE(r.is_returned, 0) = 1 THEN 0 ELSE o.sales  END AS net_sales,
+  CASE WHEN COALESCE(r.is_returned, 0) = 1 THEN 0 ELSE o.profit END AS net_profit
+FROM fct_orders o
+LEFT JOIN stg_returns r
+  ON o.order_id = r.order_id
+LEFT JOIN dim_people p
+  ON o.region = p.region;
+
+-- 4) KPI #2A — Return rate by Region
+SELECT
+  region,
+  COUNT(DISTINCT order_id) AS orders,
+  SUM(is_returned) AS returned_orders,
+  ROUND(1.0 * SUM(is_returned) / NULLIF(COUNT(DISTINCT order_id), 0), 3) AS return_rate
+FROM fct_orders_enriched
+GROUP BY region
+ORDER BY return_rate DESC;
+
+-- 5) KPI #2B — Gross vs Net revenue/profit by Region
+SELECT
+  region,
+  ROUND(SUM(sales), 2)      AS gross_revenue,
+  ROUND(SUM(net_sales), 2)  AS net_revenue,
+  ROUND(SUM(profit), 2)     AS gross_profit,
+  ROUND(SUM(net_profit), 2) AS net_profit
+FROM fct_orders_enriched
+GROUP BY region
+ORDER BY net_revenue DESC;
+
+-- 6) KPI #2C — Manager performance
+SELECT
+  region_manager,
+  region,
+  ROUND(SUM(net_sales), 2)  AS net_revenue,
+  ROUND(SUM(net_profit), 2) AS net_profit,
+  ROUND(1.0 * SUM(is_returned) / NULLIF(COUNT(DISTINCT order_id), 0), 3) AS return_rate
+FROM fct_orders_enriched
+GROUP BY region_manager, region
+ORDER BY net_revenue DESC;
+
